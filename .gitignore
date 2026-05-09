@@ -1,0 +1,6 @@
+venv/
+data/imgs/
+data/masks/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
