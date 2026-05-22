@@ -1,14 +1,17 @@
 import pandas as pd
 import numpy as np
+import json
 from pathlib import Path
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import GroupKFold, cross_validate, GroupShuffleSplit, RandomizedSearchCV
+from sklearn.model_selection import GroupKFold, cross_validate, GroupShuffleSplit, RandomizedSearchCV, validation_curve
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, balanced_accuracy_score, classification_report, confusion_matrix
 import pickle
+
+from src.feature_names import FEATURE_COLS
 
 def load_data(features_path, binary=False):
     """
@@ -19,29 +22,8 @@ def load_data(features_path, binary=False):
     :return: X (features), y (labels), groups (patient_id)
     """
     df = pd.read_csv(features_path)
-    
-    # Feature columns
-    feature_cols = [
-        # Shape features
-        'area', 'height', 'width', 'perimeter', 'compactness',
-        # Asymmetry
-        'asymmetry',
-        # Border features
-        'border_irregularity', 'border_gradient',
-        # Diameter features
-        'diameter_0', 'diameter_45', 'diameter_90', 'diameter_135', 'diameter_ratio',
-        # RGB color features
-        'mean_r', 'mean_g', 'mean_b', 'std_r', 'std_g', 'std_b',
-        # HSV color features
-        'mean_h', 'mean_s', 'mean_v', 'std_h', 'std_s', 'std_v',
-        # Relative color features
-        'rel_r', 'rel_g', 'rel_b',
-        # Texture features
-        'contrast', 'dissimilarity', 'homogeneity', 'energy', 'correlation',
-        # Hair features
-        'hair_coverage', 'hair_in_lesion',
-    ]
-    
+    feature_cols = FEATURE_COLS
+
     if binary:
         # Merge into Cancer vs Non-Cancer
         cancer_classes = ['BCC', 'MEL', 'SCC']
@@ -223,6 +205,142 @@ def tune_hyperparameters(X_dev, y_dev, groups_dev):
     return best_name, best_params
 
 
+def compute_validation_curves(X_dev, y_dev, groups_dev, output_dir):
+    """
+    Computes validation curves for Random Forest hyperparameters.
+
+    These plots show how training and validation balanced accuracy
+    change as n_estimators and max_depth vary, while all other
+    hyperparameters are held fixed. They justify the choices made
+    during tuning by showing where over/underfitting kicks in.
+
+    Saves two figures to `output_dir`:
+      - val_curve_n_estimators.png
+      - val_curve_max_depth.png
+
+    :param X_dev: development feature matrix
+    :param y_dev: development labels
+    :param groups_dev: patient_id groups
+    :param output_dir: Path-like, directory to save figures into
+    """
+    import matplotlib.pyplot as plt
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    scorer = make_scorer(balanced_accuracy_score)
+    gkf = GroupKFold(n_splits=5)
+
+    # Vary n_estimators with max_depth=10 fixed
+    n_est_range = [10, 25, 50, 100, 200, 300, 500]
+    print(f"\nValidation curve over n_estimators in {n_est_range}...")
+    pipeline_n = Pipeline([
+        ("scaler", StandardScaler()),
+        ("classifier", RandomForestClassifier(max_depth=10,
+                                              class_weight="balanced",
+                                              random_state=42)),
+    ])
+    train_scores, val_scores = validation_curve(
+        pipeline_n, X_dev, y_dev,
+        param_name="classifier__n_estimators",
+        param_range=n_est_range,
+        groups=groups_dev, cv=gkf, scoring=scorer, n_jobs=-1,
+    )
+    _plot_validation_curve(
+        n_est_range, train_scores, val_scores,
+        xlabel="n_estimators (max_depth=10 fixed)",
+        title="Validation curve: n_estimators",
+        path=output_dir / "val_curve_n_estimators.png",
+    )
+
+    # Vary max_depth with n_estimators=100 fixed; encode None as a finite
+    # sentinel so the x-axis can be plotted
+    depths = [2, 3, 5, 7, 10, 15, 20, None]
+    depth_labels = [d if d is not None else "None" for d in depths]
+    print(f"Validation curve over max_depth in {depth_labels}...")
+    pipeline_d = Pipeline([
+        ("scaler", StandardScaler()),
+        ("classifier", RandomForestClassifier(n_estimators=100,
+                                              class_weight="balanced",
+                                              random_state=42)),
+    ])
+    train_scores, val_scores = validation_curve(
+        pipeline_d, X_dev, y_dev,
+        param_name="classifier__max_depth",
+        param_range=depths,
+        groups=groups_dev, cv=gkf, scoring=scorer, n_jobs=-1,
+    )
+    _plot_validation_curve(
+        list(range(len(depths))), train_scores, val_scores,
+        xlabel="max_depth (n_estimators=100 fixed)",
+        title="Validation curve: max_depth",
+        path=output_dir / "val_curve_max_depth.png",
+        xtick_labels=depth_labels,
+    )
+
+    print(f"Validation curves saved to {output_dir}")
+
+
+def _plot_validation_curve(x, train_scores, val_scores, xlabel, title, path,
+                            xtick_labels=None):
+    """Helper to plot a validation curve with mean ± std bands."""
+    import matplotlib.pyplot as plt
+
+    train_mean = np.mean(train_scores, axis=1)
+    train_std = np.std(train_scores, axis=1)
+    val_mean = np.mean(val_scores, axis=1)
+    val_std = np.std(val_scores, axis=1)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(x, train_mean, "-o", color="#93c5fd", label="Train (CV)")
+    ax.fill_between(x, train_mean - train_std, train_mean + train_std,
+                     color="#93c5fd", alpha=0.2)
+    ax.plot(x, val_mean, "-o", color="#2563eb", label="Val (CV)")
+    ax.fill_between(x, val_mean - val_std, val_mean + val_std,
+                     color="#2563eb", alpha=0.2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Balanced accuracy")
+    ax.set_title(title, fontweight="bold")
+    ax.legend(loc="lower right")
+    ax.grid(True, alpha=0.3)
+    if xtick_labels is not None:
+        ax.set_xticks(x)
+        ax.set_xticklabels(xtick_labels)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_cv_results(results_bin, results_6, output_path):
+    """
+    Persist cross-validation results to JSON so the dashboard can
+    load them without hardcoded numbers.
+    """
+    payload = {
+        "binary": {
+            name: {
+                "train": float(res["mean_train"]),
+                "val": float(res["mean_val"]),
+                "std": float(res["std_val"]),
+            }
+            for name, res in results_bin.items()
+        },
+        "six_class": {
+            name: {
+                "train": float(res["mean_train"]),
+                "val": float(res["mean_val"]),
+                "std": float(res["std_val"]),
+            }
+            for name, res in results_6.items()
+        },
+    }
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"CV results saved to {output_path}")
+
+
 def train_and_save(X_dev, X_test, y_dev, y_test, model_path,
                    prediction_results_path, load_model, model_name=None, model_params=None):
     """
@@ -354,6 +472,16 @@ def main(features_path, prediction_results_path, model_path, load_model):
         print("\nBinary:")
         for name, res in results_bin.items():
             print(f"  {name}: {res['mean_val']:.3f} +/- {res['std_val']:.3f}")
+
+        # Persist CV results so the dashboard can read them
+        save_cv_results(results_bin, results_6, "results/cv_results.json")
+
+        # Validation curves for the chosen model (Random Forest)
+        print("\n" + "=" * 50)
+        print("VALIDATION CURVES")
+        print("=" * 50)
+        compute_validation_curves(X_dev, y_dev, groups_dev,
+                                   output_dir="results/figures")
 
         # Tune hyperparameters on the binary development set
         print("\n" + "=" * 50)
