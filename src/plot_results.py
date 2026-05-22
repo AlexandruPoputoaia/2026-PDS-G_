@@ -1,4 +1,5 @@
 import pickle
+import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -9,38 +10,41 @@ from sklearn.metrics import (
     roc_curve, auc
 )
 
+from src.feature_names import FEATURE_COLS
+
 
 # ── paths ────────────────────────────────────────────────────────────────────
 PREDICTIONS_PATH = Path("results/predictions/predictions.csv")
 MODEL_PATH       = Path("results/models/model.pkl")
+CV_RESULTS_PATH  = Path("results/cv_results.json")
 OUTPUT_PATH      = Path("results/figures/results.png")
 OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# ── CV scores from the pipeline run (binary classification) ──────────────────
-CV_RESULTS = {
-    "Decision\nTree":   {"train": 1.000, "val": 0.644, "std": 0.021},
-    "Random\nForest":   {"train": 0.987, "val": 0.714, "std": 0.019},
-    "KNN":              {"train": 0.795, "val": 0.676, "std": 0.041},
+
+# Fallback used only if cv_results.json hasn't been generated yet
+_CV_RESULTS_FALLBACK = {
+    "binary": {
+        "Decision Tree": {"train": 1.000, "val": 0.644, "std": 0.021},
+        "Random Forest": {"train": 0.987, "val": 0.714, "std": 0.019},
+        "KNN":           {"train": 0.795, "val": 0.676, "std": 0.041},
+    }
 }
 
-FEATURE_NAMES = [
-    "area", "height", "width", "perimeter", "compactness",
-    "asymmetry",
-    "border_irregularity", "border_gradient",
-    "diameter_0", "diameter_45", "diameter_90", "diameter_135", "diameter_ratio",
-    "mean_r", "mean_g", "mean_b", "std_r", "std_g", "std_b",
-    "mean_h", "mean_s", "mean_v", "std_h", "std_s", "std_v",
-    "rel_r", "rel_g", "rel_b",
-    "contrast", "dissimilarity", "homogeneity", "energy", "correlation",
-    "hair_coverage", "hair_in_lesion",
-]
+
+FEATURE_NAMES = FEATURE_COLS
 
 
 def load_artifacts():
     preds = pd.read_csv(PREDICTIONS_PATH)
     with open(MODEL_PATH, "rb") as f:
         model = pickle.load(f)
-    return preds, model
+    if CV_RESULTS_PATH.exists():
+        with open(CV_RESULTS_PATH) as f:
+            cv_results = json.load(f)["binary"]
+    else:
+        print(f"WARNING: {CV_RESULTS_PATH} not found; using fallback CV numbers")
+        cv_results = _CV_RESULTS_FALLBACK["binary"]
+    return preds, model, cv_results
 
 
 def plot_confusion_matrix(ax, preds):
@@ -70,13 +74,14 @@ def plot_roc_curve(ax, preds):
     ax.legend(loc="lower right", fontsize=9)
 
 
-def plot_cv_comparison(ax):
-    names  = list(CV_RESULTS.keys())
-    vals   = [CV_RESULTS[n]["val"]   for n in names]
-    trains = [CV_RESULTS[n]["train"] for n in names]
-    stds   = [CV_RESULTS[n]["std"]   for n in names]
+def plot_cv_comparison(ax, cv_results):
+    # Pretty 2-line labels for the x-axis
+    display_names = [n.replace(" ", "\n") for n in cv_results.keys()]
+    vals   = [cv_results[n]["val"]   for n in cv_results.keys()]
+    trains = [cv_results[n]["train"] for n in cv_results.keys()]
+    stds   = [cv_results[n]["std"]   for n in cv_results.keys()]
 
-    x = np.arange(len(names))
+    x = np.arange(len(display_names))
     w = 0.35
     bars_val   = ax.bar(x - w/2, vals,   w, label="Val (CV)",   color="#2563eb", alpha=0.85)
     bars_train = ax.bar(x + w/2, trains, w, label="Train (CV)", color="#93c5fd", alpha=0.85)
@@ -85,7 +90,7 @@ def plot_cv_comparison(ax):
                 color="black", capsize=4, linewidth=1.2)
 
     ax.set_xticks(x)
-    ax.set_xticklabels(names, fontsize=10)
+    ax.set_xticklabels(display_names, fontsize=10)
     ax.set_ylim([0, 1.05])
     ax.set_ylabel("Balanced Accuracy")
     ax.set_title("CV Model Comparison — Binary Classification", fontweight="bold")
@@ -114,7 +119,7 @@ def plot_feature_importance(ax, model, top_n=15):
 
 
 def main():
-    preds, model = load_artifacts()
+    preds, model, cv_results = load_artifacts()
 
     fig = plt.figure(figsize=(16, 12))
     fig.suptitle(
@@ -131,7 +136,7 @@ def main():
 
     plot_confusion_matrix(ax_cm, preds)
     plot_roc_curve(ax_roc, preds)
-    plot_cv_comparison(ax_cv)
+    plot_cv_comparison(ax_cv, cv_results)
     plot_feature_importance(ax_feat, model)
 
     fig.savefig(OUTPUT_PATH, dpi=150, bbox_inches="tight")
