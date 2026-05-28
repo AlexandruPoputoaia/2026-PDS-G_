@@ -1,20 +1,16 @@
 import numpy as np
 import cv2
 
+
 def get_lesion_area(mask, img=None):
+    """Fraction of the image covered by the lesion mask.
+
+    Returns a number between 0 and 1.
     """
-    Calculates the fraction of the image covered by the lesion.
-    
-    :param mask: numpy array of the mask image (white = lesion, black = background)
-    :param img: optional image to check size against
-    :return: float between 0 and 1
-    """
+    # mask is sometimes a different size than the image (annoying)
     if img is not None and img.shape[:2] != mask.shape[:2]:
         mask = cv2.resize(mask, (img.shape[1], img.shape[0]),
-                         interpolation=cv2.INTER_NEAREST)
-    
-    binary_mask = mask > 0
-    lesion_pixels = np.sum(binary_mask)
-    total_pixels = binary_mask.size
-    
-    return lesion_pixels / total_pixels
+                          interpolation=cv2.INTER_NEAREST)
+
+    binary = mask > 0
+    return np.sum(binary) / binary.size

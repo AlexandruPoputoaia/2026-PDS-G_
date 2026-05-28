@@ -2,39 +2,30 @@ import numpy as np
 import cv2
 from scipy.ndimage import binary_dilation
 
-# Ring thickness in pixels — wide enough to sample real skin, narrow enough
-# to stay close to the lesion and avoid image borders/artifacts
-_RING_THICKNESS = 10
 
 def get_relative_color(img, mask):
     """
-    Calculates the difference between the lesion color and
-    the immediately surrounding skin color.
-
-    Uses a thin ring of pixels just outside the lesion border rather than
-    the entire image background, which may contain artifacts or non-skin areas.
-
-    :param img: numpy array of the image (BGR format from cv2)
-    :param mask: numpy array of the mask (grayscale)
-    :return: dictionary with relative color features
+    Difference between lesion color and the skin around it.
+    We use a thin ring just outside the lesion instead of the whole background
+    because the background has hair and other stuff that messes it up.
     """
     if img.shape[:2] != mask.shape[:2]:
         mask = cv2.resize(mask, (img.shape[1], img.shape[0]),
-                         interpolation=cv2.INTER_NEAREST)
+                          interpolation=cv2.INTER_NEAREST)
 
     binary_mask = mask > 0
 
-    # Dilate the lesion outward and subtract the lesion itself to get a ring
-    dilated = binary_dilation(binary_mask, iterations=_RING_THICKNESS)
+    # dilate the lesion mask and subtract -> ring of pixels around the lesion
+    # 10 pixels was a good compromise (5 was too thin, 20 included other stuff)
+    dilated = binary_dilation(binary_mask, iterations=10)
     ring_mask = dilated & ~binary_mask
 
-    # Convert to RGB
-    img_rgb = img[:, :, ::-1]
+    img_rgb = img[:, :, ::-1]   # BGR -> RGB
 
     lesion_pixels = img_rgb[binary_mask]
     surrounding_pixels = img_rgb[ring_mask]
 
-    # Fall back to full background if the ring is too small (edge-of-frame lesion)
+    # fallback for lesions at the edge of the image where the ring gets cropped off
     if len(surrounding_pixels) < 10:
         surrounding_pixels = img_rgb[~binary_mask]
 
