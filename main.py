@@ -1,114 +1,101 @@
 import pandas as pd
 import numpy as np
 import json
+import pickle
 from pathlib import Path
+
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import GroupKFold, cross_validate, GroupShuffleSplit, RandomizedSearchCV, validation_curve
+from sklearn.model_selection import (
+    GroupKFold, GroupShuffleSplit, cross_validate,
+    RandomizedSearchCV, validation_curve,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, balanced_accuracy_score, classification_report, confusion_matrix
-import pickle
 
 from src.feature_names import FEATURE_COLS
 
+
+RANDOM_STATE = 42
+
+
 def load_data(features_path, binary=False):
     """
-    Loads the features CSV and returns features, labels and groups.
-    
-    :param features_path: path to features.csv
-    :param binary: if True, merge classes into Cancer vs Non-Cancer
-    :return: X (features), y (labels), groups (patient_id)
+    Load features.csv and return X, y, groups.
+
+    If binary=True we merge into Cancer (BCC/MEL/SCC) vs Non-Cancer (ACK/NEV/SEK),
+    otherwise we keep all 6 classes.
     """
     df = pd.read_csv(features_path)
-    feature_cols = FEATURE_COLS
 
     if binary:
-        # Merge into Cancer vs Non-Cancer
         cancer_classes = ['BCC', 'MEL', 'SCC']
-        df['label'] = df['diagnostic'].apply(
-            lambda x: 'Cancer' if x in cancer_classes else 'Non-Cancer'
-        )
+        df['label'] = df['diagnostic'].apply(lambda x: 'Cancer' if x in cancer_classes else 'Non-Cancer')
         y = df['label'].values
     else:
         y = df['diagnostic'].values
-    
-    X = df[feature_cols].values
+
+    X = df[FEATURE_COLS].values
     groups = df['patient_id'].values
 
-    # Validate: catch any NaN/inf that slipped through feature extraction
+    # Sanity check: we had nan show up in compactness once when area was tiny.
+    # Print a warning so we notice if it happens again instead of silently zero-ing.
     bad_mask = np.isnan(X) | np.isinf(X)
     if bad_mask.any():
         bad_rows = np.where(bad_mask.any(axis=1))[0]
-        bad_cols = [feature_cols[c] for c in np.where(bad_mask.any(axis=0))[0]]
-        print(f"WARNING: {bad_mask.sum()} invalid value(s) found in features.")
-        print(f"  Affected rows (samples): {bad_rows.tolist()}")
-        print(f"  Affected columns (features): {bad_cols}")
+        bad_cols = [FEATURE_COLS[c] for c in np.where(bad_mask.any(axis=0))[0]]
+        print(f"WARNING: {bad_mask.sum()} bad value(s) in features")
+        print(f"  rows affected: {bad_rows.tolist()}")
+        print(f"  cols affected: {bad_cols}")
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
     return X, y, groups
 
 
-def split_dev_test(X, y, groups, test_size=0.2, random_state=42):
+def split_dev_test(X, y, groups, test_size=0.2, random_state=RANDOM_STATE):
     """
-    Splits data into development and test sets using GroupShuffleSplit
-    to ensure patients don't appear in both sets.
-    
-    :param X: feature matrix
-    :param y: labels
-    :param groups: patient_id groups
-    :param test_size: fraction of data to use as test set
-    :return: X_dev, X_test, y_dev, y_test, groups_dev
+    Train/test split BY PATIENT (very important -- if the same patient is in
+    both train and test the model just memorizes them and we overestimate
+    performance. Found this out the hard way in week 4.)
     """
     gss = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
     dev_idx, test_idx = next(gss.split(X, y, groups))
-    
+
     X_dev, X_test = X[dev_idx], X[test_idx]
     y_dev, y_test = y[dev_idx], y[test_idx]
     groups_dev = groups[dev_idx]
-    
+
     return X_dev, X_test, y_dev, y_test, groups_dev
 
 
 def run_cross_validation(X, y, groups):
     """
-    Runs GroupKFold cross-validation for multiple classifiers.
-
-    Each classifier is wrapped in a Pipeline with StandardScaler so that
-    scaling is fit only on the training fold and never sees the validation fold.
-
-    :param X: feature matrix
-    :param y: labels
-    :param groups: patient_id groups
-    :return: dictionary of results per classifier
+    5-fold GroupKFold CV for 3 classifiers (DT, RF, KNN).
+    Returns a dict with the mean train/val score for each.
+    Pipeline used so the scaler only sees training data each fold.
     """
-    # Define classifiers to compare
     classifiers = {
-        "Decision Tree": DecisionTreeClassifier(random_state=42),
-        "Random Forest": RandomForestClassifier(n_estimators=100, max_depth=10, class_weight='balanced', random_state=42),
+        "Decision Tree": DecisionTreeClassifier(random_state=RANDOM_STATE),
+        "Random Forest": RandomForestClassifier(n_estimators=100, max_depth=10,
+                                                class_weight='balanced',
+                                                random_state=RANDOM_STATE),
         "KNN": KNeighborsClassifier(),
     }
 
-    # GroupKFold with 5 folds
     gkf = GroupKFold(n_splits=5)
-
-    # Scoring metric
     scorer = make_scorer(balanced_accuracy_score)
 
     results = {}
     for name, clf in classifiers.items():
         print(f"\nTraining {name}...")
-        pipeline = Pipeline([
-            ("scaler", StandardScaler()),
-            ("classifier", clf),
-        ])
+        pipeline = Pipeline([("scaler", StandardScaler()), ("classifier", clf)])
         cv_results = cross_validate(
             pipeline, X, y,
-            groups=groups,
-            cv=gkf,
+            groups=groups, cv=gkf,
             scoring=scorer,
-            return_train_score=True
+            return_train_score=True,
         )
 
         mean_val = np.mean(cv_results['test_score'])
@@ -121,7 +108,7 @@ def run_cross_validation(X, y, groups):
         results[name] = {
             "mean_val": mean_val,
             "std_val": std_val,
-            "mean_train": mean_train
+            "mean_train": mean_train,
         }
 
     return results
@@ -129,21 +116,19 @@ def run_cross_validation(X, y, groups):
 
 def tune_hyperparameters(X_dev, y_dev, groups_dev):
     """
-    Tunes hyperparameters for both Random Forest and KNN using
-    RandomizedSearchCV with GroupKFold so no patient leaks across folds.
-    Returns the name and best params of whichever model scores highest.
+    Hyperparameter tuning for both RF and KNN.
 
-    :param X_dev: development feature matrix
-    :param y_dev: development labels
-    :param groups_dev: patient_id groups for development set
-    :return: (best_model_name, best_params)
+    We use RandomizedSearchCV because the full grid would take too long for RF.
+    42 iterations for KNN covers all combinations in the grid we defined.
+
+    Returns the winning model name and its best params.
     """
     scorer = make_scorer(balanced_accuracy_score)
     gkf = GroupKFold(n_splits=5)
 
     search_configs = {
         "Random Forest": (
-            RandomForestClassifier(class_weight="balanced", random_state=42),
+            RandomForestClassifier(class_weight="balanced", random_state=RANDOM_STATE),
             {
                 "classifier__n_estimators":     [100, 200, 300],
                 "classifier__max_depth":         [3, 5, 7, 10, None],
@@ -160,12 +145,12 @@ def tune_hyperparameters(X_dev, y_dev, groups_dev):
                 "classifier__weights":     ["uniform", "distance"],
                 "classifier__metric":      ["euclidean", "manhattan", "minkowski"],
             },
-            42,  # exhausts the full grid (7 * 2 * 3)
+            42,   # covers all combinations
         ),
     }
 
-    # KNN in sklearn 1.8 fails with string labels due to an internal optimisation
-    # that casts class labels to int. Encode once and reuse for KNN searches.
+    # KNN kept crashing with our string labels ("Cancer"/"Non-Cancer") but RF was fine
+    # encoding to integers first fixed it, not totally sure why RF handles it but KNN doesn't
     le = LabelEncoder()
     y_dev_encoded = le.fit_transform(y_dev)
 
@@ -174,11 +159,8 @@ def tune_hyperparameters(X_dev, y_dev, groups_dev):
     best_params = None
 
     for name, (clf, param_dist, n_iter) in search_configs.items():
-        print(f"\nTuning {name} ({n_iter} iterations × 5 folds)...")
-        pipeline = Pipeline([
-            ("scaler", StandardScaler()),
-            ("classifier", clf),
-        ])
+        print(f"\nTuning {name} ({n_iter} iters x 5 folds)...")
+        pipeline = Pipeline([("scaler", StandardScaler()), ("classifier", clf)])
         search = RandomizedSearchCV(
             pipeline,
             param_distributions=param_dist,
@@ -186,44 +168,34 @@ def tune_hyperparameters(X_dev, y_dev, groups_dev):
             scoring=scorer,
             cv=gkf,
             n_jobs=-1,
-            random_state=42,
+            random_state=RANDOM_STATE,
             verbose=1,
         )
         y_fit = y_dev_encoded if name == "KNN" else y_dev
         search.fit(X_dev, y_fit, groups=groups_dev)
 
+        # strip the 'classifier__' prefix to make the printout readable
         params = {k.replace("classifier__", ""): v for k, v in search.best_params_.items()}
-        print(f"  Best CV balanced accuracy: {search.best_score_:.3f}")
-        print(f"  Best parameters: {params}")
+        print(f"  Best CV bal acc: {search.best_score_:.3f}")
+        print(f"  Best params:     {params}")
 
         if search.best_score_ > best_score:
             best_score = search.best_score_
             best_name = name
             best_params = params
 
-    print(f"\nWinner: {best_name} (CV balanced accuracy: {best_score:.3f})")
+    print(f"\n>>> Winner: {best_name} (CV balanced accuracy: {best_score:.3f})")
     return best_name, best_params
 
 
 def compute_validation_curves(X_dev, y_dev, groups_dev, output_dir):
     """
-    Computes validation curves for Random Forest hyperparameters.
+    Validation curves for n_estimators and max_depth.
 
-    These plots show how training and validation balanced accuracy
-    change as n_estimators and max_depth vary, while all other
-    hyperparameters are held fixed. They justify the choices made
-    during tuning by showing where over/underfitting kicks in.
-
-    Saves two figures to `output_dir`:
-      - val_curve_n_estimators.png
-      - val_curve_max_depth.png
-
-    :param X_dev: development feature matrix
-    :param y_dev: development labels
-    :param groups_dev: patient_id groups
-    :param output_dir: Path-like, directory to save figures into
+    Useful for the report -- shows where the model starts overfitting.
+    Saves two PNGs to output_dir.
     """
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt   # local import, matplotlib is slow to import
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -231,14 +203,14 @@ def compute_validation_curves(X_dev, y_dev, groups_dev, output_dir):
     scorer = make_scorer(balanced_accuracy_score)
     gkf = GroupKFold(n_splits=5)
 
-    # Vary n_estimators with max_depth=10 fixed
+    # --- n_estimators sweep ---
     n_est_range = [10, 25, 50, 100, 200, 300, 500]
     print(f"\nValidation curve over n_estimators in {n_est_range}...")
     pipeline_n = Pipeline([
         ("scaler", StandardScaler()),
         ("classifier", RandomForestClassifier(max_depth=10,
                                               class_weight="balanced",
-                                              random_state=42)),
+                                              random_state=RANDOM_STATE)),
     ])
     train_scores, val_scores = validation_curve(
         pipeline_n, X_dev, y_dev,
@@ -246,15 +218,15 @@ def compute_validation_curves(X_dev, y_dev, groups_dev, output_dir):
         param_range=n_est_range,
         groups=groups_dev, cv=gkf, scoring=scorer, n_jobs=-1,
     )
-    _plot_validation_curve(
+    _plot_val_curve(
         n_est_range, train_scores, val_scores,
         xlabel="n_estimators (max_depth=10 fixed)",
         title="Validation curve: n_estimators",
         path=output_dir / "val_curve_n_estimators.png",
     )
 
-    # Vary max_depth with n_estimators=100 fixed; encode None as a finite
-    # sentinel so the x-axis can be plotted
+    # --- max_depth sweep ---
+    # None means no limit, encode it as a sentinel so we can plot it on the x axis
     depths = [2, 3, 5, 7, 10, 15, 20, None]
     depth_labels = [d if d is not None else "None" for d in depths]
     print(f"Validation curve over max_depth in {depth_labels}...")
@@ -262,7 +234,7 @@ def compute_validation_curves(X_dev, y_dev, groups_dev, output_dir):
         ("scaler", StandardScaler()),
         ("classifier", RandomForestClassifier(n_estimators=100,
                                               class_weight="balanced",
-                                              random_state=42)),
+                                              random_state=RANDOM_STATE)),
     ])
     train_scores, val_scores = validation_curve(
         pipeline_d, X_dev, y_dev,
@@ -270,7 +242,7 @@ def compute_validation_curves(X_dev, y_dev, groups_dev, output_dir):
         param_range=depths,
         groups=groups_dev, cv=gkf, scoring=scorer, n_jobs=-1,
     )
-    _plot_validation_curve(
+    _plot_val_curve(
         list(range(len(depths))), train_scores, val_scores,
         xlabel="max_depth (n_estimators=100 fixed)",
         title="Validation curve: max_depth",
@@ -281,9 +253,8 @@ def compute_validation_curves(X_dev, y_dev, groups_dev, output_dir):
     print(f"Validation curves saved to {output_dir}")
 
 
-def _plot_validation_curve(x, train_scores, val_scores, xlabel, title, path,
-                            xtick_labels=None):
-    """Helper to plot a validation curve with mean ± std bands."""
+def _plot_val_curve(x, train_scores, val_scores, xlabel, title, path, xtick_labels=None):
+    """plot one validation curve with train and val + std band"""
     import matplotlib.pyplot as plt
 
     train_mean = np.mean(train_scores, axis=1)
@@ -292,12 +263,10 @@ def _plot_validation_curve(x, train_scores, val_scores, xlabel, title, path,
     val_std = np.std(val_scores, axis=1)
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(x, train_mean, "-o", color="#93c5fd", label="Train (CV)")
-    ax.fill_between(x, train_mean - train_std, train_mean + train_std,
-                     color="#93c5fd", alpha=0.2)
-    ax.plot(x, val_mean, "-o", color="#2563eb", label="Val (CV)")
-    ax.fill_between(x, val_mean - val_std, val_mean + val_std,
-                     color="#2563eb", alpha=0.2)
+    ax.plot(x, train_mean, "-o", color="tab:orange", label="Train (CV)")
+    ax.fill_between(x, train_mean - train_std, train_mean + train_std, color="tab:orange", alpha=0.2)
+    ax.plot(x, val_mean, "-o", color="tab:blue", label="Val (CV)")
+    ax.fill_between(x, val_mean - val_std, val_mean + val_std, color="tab:blue", alpha=0.2)
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Balanced accuracy")
     ax.set_title(title, fontweight="bold")
@@ -312,26 +281,15 @@ def _plot_validation_curve(x, train_scores, val_scores, xlabel, title, path,
 
 
 def save_cv_results(results_bin, results_6, output_path):
-    """
-    Persist cross-validation results to JSON so the dashboard can
-    load them without hardcoded numbers.
-    """
+    """Dump CV results to JSON so plot_results.py can read them later."""
     payload = {
         "binary": {
-            name: {
-                "train": float(res["mean_train"]),
-                "val": float(res["mean_val"]),
-                "std": float(res["std_val"]),
-            }
-            for name, res in results_bin.items()
+            name: {"train": float(r["mean_train"]), "val": float(r["mean_val"]), "std": float(r["std_val"])}
+            for name, r in results_bin.items()
         },
         "six_class": {
-            name: {
-                "train": float(res["mean_train"]),
-                "val": float(res["mean_val"]),
-                "std": float(res["std_val"]),
-            }
-            for name, res in results_6.items()
+            name: {"train": float(r["mean_train"]), "val": float(r["mean_val"]), "std": float(r["std_val"])}
+            for name, r in results_6.items()
         },
     }
     output_path = Path(output_path)
@@ -342,19 +300,14 @@ def save_cv_results(results_bin, results_6, output_path):
 
 
 def train_and_save(X_dev, X_test, y_dev, y_test, model_path,
-                   prediction_results_path, load_model, model_name=None, model_params=None):
+                   prediction_results_path, load_model,
+                   model_name=None, model_params=None):
     """
-    Trains the best model on development set, evaluates on test set.
+    Train the final model on dev set and evaluate on test set.
+    If load_model is True we skip training and just load the saved pickle.
 
-    :param X_dev: development feature matrix
-    :param X_test: test feature matrix
-    :param y_dev: development labels
-    :param y_test: test labels
-    :param model_path: path to save/load the model
-    :param prediction_results_path: path to save predictions
-    :param load_model: if True, load model from model_path
-    :param model_name: "Random Forest" or "KNN" (from tuning)
-    :param model_params: dict of hyperparameters (from tuning)
+    Saves: the model, the scaler, (and the label encoder for KNN), plus a
+    predictions CSV with probabilities.
     """
     scaler_path = Path(model_path).with_suffix('.scaler.pkl')
     encoder_path = Path(model_path).with_suffix('.encoder.pkl')
@@ -365,32 +318,33 @@ def train_and_save(X_dev, X_test, y_dev, y_test, model_path,
             clf = pickle.load(f)
         with open(scaler_path, 'rb') as f:
             scaler = pickle.load(f)
-        # Load label encoder if it exists (saved for KNN models)
+        # encoder only exists for KNN runs
         le = pickle.load(open(encoder_path, 'rb')) if encoder_path.exists() else None
-        print("Model and scaler loaded!")
+        print("Loaded.")
     else:
         scaler = StandardScaler()
         scaler.fit(X_dev)
 
         params = model_params or {}
         if model_name == "KNN":
-            # Encode string labels to integers — sklearn 1.8 KNN requires numeric labels
+            # same label encoding fix as in tune_hyperparameters
             le = LabelEncoder()
             y_dev_fit = le.fit_transform(y_dev)
-            print(f"Training final KNN model with params: {params}")
+            print(f"Training final KNN with params: {params}")
             clf = KNeighborsClassifier(**params)
             clf.fit(scaler.transform(X_dev), y_dev_fit)
             with open(encoder_path, 'wb') as f:
                 pickle.dump(le, f)
-            print(f"Label encoder saved to {encoder_path}")
+            print(f"Saved label encoder to {encoder_path}")
         else:
             le = None
+            # default params in case tuning didn't run
             params = params or {"n_estimators": 100, "max_depth": 10}
-            print(f"Training final Random Forest model with params: {params}")
-            clf = RandomForestClassifier(class_weight="balanced", random_state=42, **params)
+            print(f"Training final Random Forest with params: {params}")
+            clf = RandomForestClassifier(class_weight="balanced", random_state=RANDOM_STATE, **params)
             clf.fit(scaler.transform(X_dev), y_dev)
 
-        # Save the model and scaler together
+        # save model + scaler
         Path(model_path).parent.mkdir(parents=True, exist_ok=True)
         with open(model_path, 'wb') as f:
             pickle.dump(clf, f)
@@ -401,13 +355,12 @@ def train_and_save(X_dev, X_test, y_dev, y_test, model_path,
 
     X_dev_scaled = scaler.transform(X_dev)
     X_test_scaled = scaler.transform(X_test)
-    
-    # Evaluate on test set
+
     print("\n--- Test Set Evaluation ---")
     raw_predictions = clf.predict(X_test_scaled)
     probabilities = clf.predict_proba(X_test_scaled)
 
-    # Decode integer predictions back to string labels for KNN models
+    # decode int labels back to strings for KNN
     if le is not None:
         predictions = le.inverse_transform(raw_predictions)
         class_names = le.classes_
@@ -422,14 +375,14 @@ def train_and_save(X_dev, X_test, y_dev, y_test, model_path,
     print("Confusion Matrix:")
     print(confusion_matrix(y_test, predictions))
 
-    # Save predictions
+    # save predictions with one prob column per class
     pred_df = pd.DataFrame({
         'true_label': y_test,
         'predicted_label': predictions,
     })
     for i, class_name in enumerate(class_names):
         pred_df[f'prob_{class_name}'] = probabilities[:, i]
-    
+
     Path(prediction_results_path).parent.mkdir(parents=True, exist_ok=True)
     pred_df.to_csv(prediction_results_path, index=False)
     print(f"\nPredictions saved to {prediction_results_path}")
@@ -437,29 +390,30 @@ def train_and_save(X_dev, X_test, y_dev, y_test, model_path,
 
 def main(features_path, prediction_results_path, model_path, load_model):
     """
-    Full model pipeline: cross-validation for model selection,
-    saving models and predictions.
+    Full pipeline: load -> split -> CV both setups (6-class and binary) ->
+    validation curves -> tune -> train final -> evaluate on test.
+
+    Skips everything except final train+test if load_model=True.
     """
-    # Load binary data
+    # binary by default (we settled on binary in week 5 -- 6-class scored too low)
     X, y, groups = load_data(features_path, binary=True)
-    
-    # Split into development and test sets
-    print("Splitting data into development and test sets...")
+
+    print("Splitting into dev / test...")
     X_dev, X_test, y_dev, y_test, groups_dev = split_dev_test(X, y, groups)
-    print(f"Development set: {len(y_dev)} samples")
+    print(f"Dev set:  {len(y_dev)} samples")
     print(f"Test set: {len(y_test)} samples")
 
     if not load_model:
-        # Compare 6-class vs binary on development set
+        # compare 6-class vs binary on the dev set
         print("\n" + "=" * 50)
-        print("6-CLASS CLASSIFICATION (development set)")
+        print("6-CLASS CLASSIFICATION (dev set)")
         print("=" * 50)
         X_6, y_6, groups_6 = load_data(features_path, binary=False)
         X_6_dev, _, y_6_dev, _, groups_6_dev = split_dev_test(X_6, y_6, groups_6)
         results_6 = run_cross_validation(X_6_dev, y_6_dev, groups_6_dev)
 
         print("\n" + "=" * 50)
-        print("BINARY CLASSIFICATION (development set)")
+        print("BINARY CLASSIFICATION (dev set)")
         print("=" * 50)
         results_bin = run_cross_validation(X_dev, y_dev, groups_dev)
 
@@ -473,17 +427,15 @@ def main(features_path, prediction_results_path, model_path, load_model):
         for name, res in results_bin.items():
             print(f"  {name}: {res['mean_val']:.3f} +/- {res['std_val']:.3f}")
 
-        # Persist CV results so the dashboard can read them
         save_cv_results(results_bin, results_6, "results/cv_results.json")
 
-        # Validation curves for the chosen model (Random Forest)
+        # validation curves on the binary dev set
         print("\n" + "=" * 50)
         print("VALIDATION CURVES")
         print("=" * 50)
-        compute_validation_curves(X_dev, y_dev, groups_dev,
-                                   output_dir="results/figures")
+        compute_validation_curves(X_dev, y_dev, groups_dev, output_dir="results/figures")
 
-        # Tune hyperparameters on the binary development set
+        # tune on binary dev set
         print("\n" + "=" * 50)
         print("HYPERPARAMETER TUNING")
         print("=" * 50)
@@ -491,7 +443,7 @@ def main(features_path, prediction_results_path, model_path, load_model):
     else:
         best_model_name, best_params = None, None
 
-    # Train final model and evaluate on test set
+    # final eval on test set
     print("\n" + "=" * 50)
     print("FINAL MODEL EVALUATION ON TEST SET")
     print("=" * 50)
@@ -502,9 +454,10 @@ def main(features_path, prediction_results_path, model_path, load_model):
 
 
 if __name__ == "__main__":
+    # TODO maybe make these CLI args at some point but for now just edit them here
     features_path = "./data/features.csv"
     prediction_results_path = "./results/predictions/predictions.csv"
     model_path = "./results/models/model.pkl"
-    load_model = False
+    load_model = False   # set True to skip training and just re-evaluate
 
     main(features_path, prediction_results_path, model_path, load_model)
