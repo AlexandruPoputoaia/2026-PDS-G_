@@ -1,15 +1,11 @@
 import numpy as np
 import cv2
-
-# we use 8 hue bins. tried 4 and 16 too, 8 looked best on the val set
+# we use 8 hue bins
 NUM_BINS = 8
-
-
 def get_color_histogram(img, mask):
-    """
-    Hue histogram inside the lesion, normalized to probabilities.
-    Captures color distribution better than just the mean alone.
-    """
+    
+    #Hue histogram inside the lesion, normalized to probabilities.
+
     if img.shape[:2] != mask.shape[:2]:
         mask = cv2.resize(mask, (img.shape[1], img.shape[0]),
                           interpolation=cv2.INTER_NEAREST)
@@ -26,7 +22,6 @@ def get_color_histogram(img, mask):
     if hue_pixels.size == 0:
         return empty
 
-    # range (0, 180) because opencv hue is in [0, 179]
     counts, _ = np.histogram(hue_pixels, bins=NUM_BINS, range=(0, 180))
     total = counts.sum()
     if total == 0:

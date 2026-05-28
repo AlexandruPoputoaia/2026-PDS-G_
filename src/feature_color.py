@@ -3,16 +3,18 @@ import cv2
 
 
 def get_color_features(img, mask):
-    """RGB mean and std inside the lesion."""
 
-    # WATCH OUT: cv2 loads images as BGR not RGB!! I lost like 2 hours to this -A
+    #RGB mean and std inside the lesion.
+    # cv2 loads images as BGR not RGB!!
+
     if img.shape[:2] != mask.shape[:2]:
         mask = cv2.resize(mask, (img.shape[1], img.shape[0]),
                           interpolation=cv2.INTER_NEAREST)
 
     binary_mask = mask > 0
-    img_rgb = img[:, :, ::-1]   # BGR -> RGB
 
+    img_rgb = img[:, :, ::-1]   # BGR to RGB
+    
     lesion_pixels = img_rgb[binary_mask]
 
     if len(lesion_pixels) == 0:

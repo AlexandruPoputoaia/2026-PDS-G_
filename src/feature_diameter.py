@@ -7,7 +7,8 @@ def get_diameter_at_angle(mask, angle):
     """Measure the lesion width after rotating the mask by `angle` degrees."""
     binary_mask = mask > 0
 
-    # skimage.transform.rotate is slow on big masks but it works ¯\_(ツ)_/¯
+    # skimage.transform.rotate is slow on big masks
+
     rotated = transform.rotate(binary_mask.astype(float), angle, preserve_range=True)
     rotated = rotated > 0.5
 

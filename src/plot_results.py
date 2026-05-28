@@ -6,9 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from pathlib import Path
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
-
 from src.feature_names import FEATURE_COLS
-
 
 # paths
 PREDICTIONS_PATH = Path("results/predictions/predictions.csv")
@@ -54,7 +52,7 @@ def plot_roc_curve(ax, preds):
 
 
 def plot_cv_comparison(ax, cv_results):
-    # 2-line labels so they don't overlap on the x axis
+    #2 line labels so they don't overlap on the x axis
     display_names = [n.replace(" ", "\n") for n in cv_results.keys()]
     vals   = [cv_results[n]["val"]   for n in cv_results.keys()]
     trains = [cv_results[n]["train"] for n in cv_results.keys()]
@@ -110,7 +108,7 @@ def main():
         fontsize=14, fontweight="bold", y=0.98
     )
 
-    # 2x2 grid. hspace had to be bumped to 0.38 because the bottom titles
+    # 2x2 grid.
     # were overlapping with the x labels of the top plots
     gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.38, wspace=0.32)
     ax_cm   = fig.add_subplot(gs[0, 0])

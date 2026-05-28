@@ -84,7 +84,7 @@ Validation curves justifying the hyperparameter choices are in
 
 ## Setup
 
-Requires **Python 3.13**. Install dependencies into a virtual environment:
+Python 3.13**
 
 ```bash
 python -m venv venv
@@ -105,10 +105,8 @@ data/masks/  →  PAT_xxx_yyy_zzz_mask.png
 
 ## How to reproduce
 
-Run the four steps in order from the project root:
-
 ```bash
-# 1. Extract features from images → writes data/features.csv  (~10 min)
+# 1. Extract features from images → writes data/features.csv
 python -m src.extract_features
 
 # 2. CV comparison, hyperparameter tuning, final training → writes
@@ -122,7 +120,7 @@ python -m src.plot_results
 python -m src.open_question
 ```
 
-To evaluate the saved model on a new dataset (TA evaluation flow):
+To evaluate the saved model on a new dataset
 update the image/mask paths in `src/extract_features.py`, re-run
 step 1 to regenerate `features.csv`, then set `load_model = True` at
 the bottom of `main.py` and re-run step 2.
@@ -152,8 +150,7 @@ the bottom of `main.py` and re-run step 2.
 - **Patient-grouped splits.** `GroupShuffleSplit` for dev/test and
   `GroupKFold(n_splits=5)` for cross-validation, both keyed on
   `patient_id`. Patients never span the train/test boundary even though
-  many have multiple images, preventing the leakage scenario described
-  by Sasse et al. (2025).
+  many have multiple images.
 - **No preprocessing leakage.** `StandardScaler` lives inside the
   scikit-learn `Pipeline`, fitted only on training folds.
 - **Balanced accuracy** as the selection metric — raw accuracy
@@ -177,7 +174,7 @@ the bottom of `main.py` and re-run step 2.
 `hair_in_lesion` provide genuine signal or exploit a clinical-workflow
 shortcut. Dermatologists often shave the skin around lesions they
 consider suspicious before photographing, so less hair can spuriously
-correlate with malignancy (Winkler et al., 2019).
+correlate with malignancy
 
 The same tuned Random Forest is trained twice on identical patient-
 grouped folds — once with all 55 features, once with the two hair
@@ -190,18 +187,6 @@ and texture features.
 
 Output: `results/figures/open_question_hair.png`,
 `results/open_question_results.json`.
-
----
-
-## Team contributions
-
-| Member | Contribution |
-|---|---|
-| TBD | TBD |
-| TBD | TBD |
-| TBD | TBD |
-| TBD | TBD |
-| TBD | TBD |
 
 ---
 

@@ -19,8 +19,7 @@ from src.feature_lbp import get_lbp_features
 from src.feature_hair import get_hair_features
 
 
-def extract_features_for_image(img_id):
-    """Extract all features for one image. Returns None if image or mask missing."""
+def extract_features_for_image(img_id): #Extract all features for one images. Returns None if image or mask missing
     img_path = find_image(img_id)
     mask_path = find_mask(img_id)
 
@@ -35,7 +34,8 @@ def extract_features_for_image(img_id):
 
     features = {"img_id": img_id}
 
-    # ---- shape ----
+    #shape
+
     features["area"] = get_lesion_area(mask, img)
     h, w = get_lesion_dimensions(mask, img)
     features["height"] = h
@@ -45,29 +45,34 @@ def extract_features_for_image(img_id):
     features["solidity"] = get_solidity(mask, img)
     features["extent"] = get_extent(mask, img)
 
-    # ---- asymmetry ----
+    #asymmetry
+
     features["asymmetry"] = get_asymmetry(mask, img)
 
-    # ---- border ----
+    #border
+
     features["border_irregularity"] = get_border_irregularity(mask, img)
     features["border_gradient"] = get_border_gradient(mask, img)
 
-    # ---- diameter ----
+    #diameter
+
     features.update(get_all_diameters(mask, img))
 
-    # ---- color ----
+    #color
+
     features.update(get_color_features(img, mask))
     features.update(get_hsv_features(img, mask))
     features.update(get_color_histogram(img, mask))
     features.update(get_relative_color(img, mask))
 
-    # ---- texture ----
+    #texture
+
     features.update(get_texture_features(img, mask))
     features.update(get_lbp_features(img, mask))
 
-    # ---- hair ----
-    features.update(get_hair_features(img, mask))
+    #hair
 
+    features.update(get_hair_features(img, mask))
     return features
 
 
@@ -75,8 +80,7 @@ def main():
     print("Loading metadata...")
     df = pd.read_csv("data/metadata.csv")
     print(f"Total images in metadata: {len(df)}")
-
-    print("Extracting features (this takes a while)...")
+    print("Extracting features...")
     results = []
     failed = []
 
@@ -89,12 +93,14 @@ def main():
 
     print(f"Done. Processed {len(results)} images, failed on {len(failed)}.")
     if failed:
-        # only print first 10 so the terminal doesn't explode
+        # only print first 10
+
         print("First failed ids:", failed[:10])
 
     features_df = pd.DataFrame(results)
 
-    # merge in the diagnostic label and the patient_id so they're in features.csv too
+    # merge in the diagnostic label and the patient_id so they're in features.csv 
+
     features_df = features_df.merge(
         df[["img_id", "diagnostic", "patient_id"]],
         on="img_id", how="left",

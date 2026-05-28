@@ -1,13 +1,5 @@
 # open question: do the hair features actually help?
-#
-# we noticed some images have a lot of hair and some don't. someone in the group
-# pointed out that doctors might shave the area before photographing suspicious
-# lesions, so less hair could just mean the doctor was already suspicious --
-# not anything about the lesion itself. read about it in one of the papers.
-#
-# to test this: train the model twice (with and without the two hair features)
-# and compare. if removing them hurts a lot the model was probably cheating.
-#
+# train the model twice (with and without the two hair features) and compare.
 # run with: python -m src.open_question
 
 import json
@@ -20,29 +12,25 @@ from sklearn.model_selection import GroupKFold, cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import make_scorer, balanced_accuracy_score
-
 from src.feature_names import FEATURE_COLS, HAIR_FEATURES
-
 
 FEATURES_PATH = Path("data/features.csv")
 OUTPUT_FIG = Path("results/figures/open_question_hair.png")
 OUTPUT_JSON = Path("results/open_question_results.json")
 
-
 def load_binary():
-    """Load features.csv and return X, y, groups for binary cancer/non-cancer."""
+    #Load features.csv and return X, y, groups for binary cancer/non-cancer
     df = pd.read_csv(FEATURES_PATH)
     cancer = {"BCC", "MEL", "SCC"}
     y = df["diagnostic"].apply(lambda c: "Cancer" if c in cancer else "Non-Cancer").values
     X = df[FEATURE_COLS].copy()
-    # got some inf values once during dev, just replace them
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     groups = df["patient_id"].values
     return X, y, groups
 
 
 def cv_scores(X, y, groups, scorer, cv):
-    """Just a wrapper so we don't repeat the pipeline definition twice."""
+    #No repeat the pipeline definition twice
     pipeline = Pipeline([
         ("scaler", StandardScaler()),
         ("classifier", RandomForestClassifier(
@@ -69,9 +57,6 @@ def main():
 
     gkf = GroupKFold(n_splits=5)
     bal_acc = make_scorer(balanced_accuracy_score)
-
-    # AUC scorer "roc_auc" wants numeric labels 0/1. Encode them and make sure
-    # Cancer = 1 (otherwise the AUC is for the wrong class and looks weird)
     le = LabelEncoder()
     y_enc = le.fit_transform(y)
     if list(le.classes_).index("Cancer") != 1:
@@ -95,7 +80,7 @@ def main():
     print(f"  Balanced acc: {delta_bal:+.3f}")
     print(f"  AUC:          {delta_auc:+.3f}")
 
-    # save results so we don't have to rerun this every time we want the numbers
+    # save results
     OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_JSON, "w") as f:
         json.dump({

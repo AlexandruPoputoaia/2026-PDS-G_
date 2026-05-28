@@ -2,21 +2,16 @@ import numpy as np
 import cv2
 from skimage.feature import local_binary_pattern
 
-# LBP with P=8 neighbours and radius 1. With method="uniform" we get 10 bins
-# (= P+2). Read about it here: https://scikit-image.org/docs/stable/auto_examples/features_detection/plot_local_binary_pattern.html
+# LBP with P=8 neighbours and radius 1. With method="uniform" we get 10 bins   (= P+2)
 P = 8
 R = 1
 N_BINS = P + 2   # 10
 
 
 def get_lbp_features(img, mask):
-    """
-    Local Binary Pattern histogram inside the lesion.
+    #Local Binary Pattern histogram inside the lesion.
+    #LBP describes the texture around each pixel. We compute it, take only the pixels that fall inside the lesion mask, and return the normalized histogram, so the values sum to 1.
 
-    LBP describes the texture around each pixel. We compute it, take only the
-    pixels that fall inside the lesion mask, and return the normalized histogram
-    so the values sum to 1.
-    """
     if img.shape[:2] != mask.shape[:2]:
         mask = cv2.resize(mask, (img.shape[1], img.shape[0]),
                           interpolation=cv2.INTER_NEAREST)
@@ -29,8 +24,8 @@ def get_lbp_features(img, mask):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # crop to bbox before computing LBP -- it's WAY faster on small images
-    # and avoids picking up nonsense from outside the lesion
+    # crop to bbox before computing LBP
+
     rows = np.any(binary_mask, axis=1)
     cols = np.any(binary_mask, axis=0)
     rmin, rmax = np.where(rows)[0][[0, -1]]

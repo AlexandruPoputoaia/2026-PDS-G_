@@ -5,9 +5,8 @@ import cv2
 def get_hair_features(img, mask):
     """
     Detect hair using BlackHat filter and return two ratios:
-      - hair_coverage: hair pixels over the whole image
-      - hair_in_lesion: hair pixels inside the lesion
-
+    - hair_coverage: hair pixels over the whole image
+    - hair_in_lesion: hair pixels inside the lesion
     BlackHat = closing(image) - image  -> highlights dark thin structures.
     """
     if img.shape[:2] != mask.shape[:2]:
@@ -17,12 +16,12 @@ def get_hair_features(img, mask):
     binary_mask = mask > 0
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # tried kernel sizes 9, 17, 25 -- 17 looked best on our test images
+    #kernel size 17 looked best on our test images
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 17))
 
     blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
 
-    # otsu picks the threshold per image (some images are much darker)
+    #picks the threshold per image 
     _, hair_mask = cv2.threshold(blackhat, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
 
     total_pixels = img.shape[0] * img.shape[1]

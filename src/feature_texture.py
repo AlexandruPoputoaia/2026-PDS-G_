@@ -4,17 +4,11 @@ from skimage.feature import graycomatrix, graycoprops
 
 
 def get_texture_features(img, mask):
-    """GLCM texture features: contrast, dissimilarity, homogeneity, energy, correlation.
-    Computed at 4 angles and averaged.
-    """
     if img.shape[:2] != mask.shape[:2]:
         mask = cv2.resize(mask, (img.shape[1], img.shape[0]),
                           interpolation=cv2.INTER_NEAREST)
-
     binary_mask = mask > 0
-
     if np.sum(binary_mask) == 0:
-        # had a crash on an empty mask, just return zeros
         return {
             "contrast": 0, "dissimilarity": 0,
             "homogeneity": 0, "energy": 0, "correlation": 0,
@@ -22,19 +16,16 @@ def get_texture_features(img, mask):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # crop to bbox so background pixels don't enter the GLCM
     rows = np.any(binary_mask, axis=1)
     cols = np.any(binary_mask, axis=0)
+
     rmin, rmax = np.where(rows)[0][[0, -1]]
     cmin, cmax = np.where(cols)[0][[0, -1]]
+
     cropped_gray = gray[rmin:rmax+1, cmin:cmax+1]
     cropped_mask = binary_mask[rmin:rmax+1, cmin:cmax+1]
-
-    # zero out remaining background pixels inside the bbox
     cropped_gray = cropped_gray.copy()
     cropped_gray[~cropped_mask] = 0
-
-    # reduce to 32 gray levels (256 was way too slow)
     gray_32 = (cropped_gray // 8).astype(np.uint8)
 
     glcm = graycomatrix(
@@ -49,7 +40,6 @@ def get_texture_features(img, mask):
     energy        = float(np.mean(graycoprops(glcm, 'energy')[0, :]))
     correlation   = float(np.mean(graycoprops(glcm, 'correlation')[0, :]))
 
-    # correlation can be nan for uniform regions (divide by zero in the formula)
     if np.isnan(correlation):
         correlation = 0.0
 
