@@ -3,9 +3,9 @@
 Skin lesion classification on the **PAD-UFES-20** dataset, built for the
 ITU course *Projects in Data Science* (Spring 2026).
 
-A Random Forest is trained on **55 hand-crafted image features** —
+A Random Forest is trained on **55 hand-crafted image features**
 covering shape, colour, texture, border irregularity, asymmetry,
-diameter, and hair — to distinguish **cancer** (BCC, MEL, SCC) from
+diameter, and hair to distinguish **cancer** (BCC, MEL, SCC) from
 **non-cancer** (ACK, NEV, SEK) lesions. All train/test splits and
 cross-validation folds are grouped by `patient_id` to prevent
 patient-level data leakage (Sasse et al., 2025).
