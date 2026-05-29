@@ -153,7 +153,7 @@ the bottom of `main.py` and re-run step 2.
   many have multiple images.
 - **No preprocessing leakage.** `StandardScaler` lives inside the
   scikit-learn `Pipeline`, fitted only on training folds.
-- **Balanced accuracy** as the selection metric — raw accuracy
+- **Balanced accuracy** as the selection metric raw accuracy
   over-rewards predicting the majority class on this imbalanced dataset.
 - **Three classifiers compared** in CV (Decision Tree, Random Forest,
   KNN) before selecting the winner.
