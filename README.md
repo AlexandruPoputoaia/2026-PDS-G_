@@ -177,8 +177,8 @@ consider suspicious before photographing, so less hair can spuriously
 correlate with malignancy
 
 The same tuned Random Forest is trained twice on identical patient-
-grouped folds — once with all 55 features, once with the two hair
-features removed — and balanced accuracy and AUC are compared.
+grouped folds once with all 55 features, once with the two hair
+features removed and balanced accuracy and AUC are compared.
 
 **Result:** removing hair features changes balanced accuracy by only
 +0.001 and AUC by 0.000. The model is not relying on a hair shortcut;
